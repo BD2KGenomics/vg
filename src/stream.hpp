@@ -128,13 +128,20 @@ void for_each(std::istream& in,
     for_each(in, lambda, noop);
 }
 
+// Internal implementation underlying several variants of for_each_parallel below
+// lambda2 is invoked in interleaved pairs of elements. The elements of each pair
+// are in order but the overall order in which lambda2 is invoked on pairs is
+// undefined (and concurrent). lambda1 is invoked on an odd last element of the
+// stream, if any.
 template <typename T>
-void for_each_parallel(std::istream& in,
-                       const std::function<void(T&)>& lambda,
-                       const std::function<void(uint64_t)>& handle_count) {
+void __for_each_parallel_impl(std::istream& in,
+                              const std::function<void(T&)>& lambda1,
+                              const std::function<void(T&,T&)>& lambda2,
+                              const std::function<void(uint64_t)>& handle_count) {
 
     // objects will be handed off to worker threads in batches of this many
-    const uint64_t batch_size = 1024;
+    const uint64_t batch_size = 256;
+    static_assert(batch_size % 2 == 0, "stream::for_each_parallel::batch_size must be even");
     // max # of such batches to be holding in memory
     const uint64_t max_batches_outstanding = 256;
     // number of batches currently being processed
@@ -142,7 +149,7 @@ void for_each_parallel(std::istream& in,
 
     // this loop handles a chunked file with many pieces
     // such as we might write in a multithreaded process
-    #pragma omp parallel default(none) shared(in, lambda, handle_count, batches_outstanding)
+    #pragma omp parallel default(none) shared(in, lambda1, lambda2, handle_count, batches_outstanding)
     #pragma omp single
     {
         auto handle = [](bool retval) -> void {
@@ -177,7 +184,7 @@ void for_each_parallel(std::istream& in,
                     batch->push_back(std::move(s));
                 }
 
-                if (batch->size() >= batch_size) {
+                if (batch->size() == batch_size) {
                     // time to enqueue this batch for processing. first, block if
                     // we've hit max_batches_outstanding.
                     uint64_t b;
@@ -189,14 +196,15 @@ void for_each_parallel(std::istream& in,
                         b = batches_outstanding;
                     }
                     // spawn task to process this batch
-                    #pragma omp task default(none) firstprivate(batch) shared(batches_outstanding, lambda, handle)
+                    #pragma omp task default(none) firstprivate(batch) shared(batches_outstanding, lambda2, handle)
                     {
                         {
-                            T object;
-                            for (const std::string& s_j : *batch) {
+                            T obj1, obj2;
+                            for (int i = 0; i<batch_size; i+=2) {
                                 // parse protobuf object and invoke lambda on it
-                                handle(object.ParseFromString(s_j));
-                                lambda(object);
+                                handle(obj1.ParseFromString(batch->at(i)));
+                                handle(obj2.ParseFromString(batch->at(i+1)));
+                                lambda2(obj1,obj2);
                             }
                         } // scope object
                         delete batch;
@@ -216,11 +224,17 @@ void for_each_parallel(std::istream& in,
         // process final batch
         if (batch) {
             {
-                T object;
-                for (const std::string& s_j : *batch) {
-                    handle(object.ParseFromString(s_j));
-                    lambda(object);
-                }
+                T obj1, obj2;
+                int i;
+                for (i = 0; i < batch->size(); i += 2) {
+                    handle(obj1.ParseFromString(batch->at(i)));
+                    if (i+1 != batch->size()) {
+                        handle(obj2.ParseFromString(batch->at(i+1)));
+                        lambda2(obj1, obj2);
+                    } else {
+                        lambda1(obj1);
+                    }
+                } 
             } // scope object
             delete batch;
         }
@@ -230,6 +244,26 @@ void for_each_parallel(std::istream& in,
         delete raw_in;
     }
 }
+
+// parallel process interleaved pairs of elements; error out if there's an odd number of elements
+template <typename T>
+void for_each_interleaved_pair_parallel(std::istream& in,
+                                        const std::function<void(T&,T&)>& lambda2) {
+    std::function<void(T&)> err1 = [](T&){
+        throw std::runtime_error("stream::for_each_interleaved_pair_parallel: expected input stream of interleaved pairs, but it had odd number of elements");
+    };
+    __for_each_parallel_impl(in, err1, lambda2, [](uint64_t) { });
+}
+
+// for each element, parallelized (no pairing assumption)
+template <typename T>
+void for_each_parallel(std::istream& in,
+                       const std::function<void(T&)>& lambda1,
+                       const std::function<void(uint64_t)>& handle_count) {
+    std::function<void(T&,T&)> lambda2 = [&lambda1](T& o1, T& o2) { lambda1(o1); lambda1(o2); }; 
+    __for_each_parallel_impl(in, lambda1, lambda2, handle_count);
+}
+
 
 template <typename T>
 void for_each_parallel(std::istream& in,
