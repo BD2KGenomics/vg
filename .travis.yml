@@ -18,7 +18,7 @@ before_install:
   - mv deps_cached deps
   - (ls -lah deps/; ls -lah bin/; ls -lah lib/; ls -lah include/) || true
   - |
-    if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then 
+    if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
       sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
       ls /etc/apt/sources.list.d
       sudo rm /etc/apt/sources.list.d/google-chrome.list
@@ -48,10 +48,21 @@ before_install:
   - python ./configure.py
   - source ./source_me.sh
 install:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then make get-deps;fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]] && [[ "$TRAVIS_BRANCH_NAME" != "autodocker" ]]; then make get-deps; fi
 script:
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then make -j4 && make test && make static -j4; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then make -j4 && make test; fi
+  - |
+    if [[ "$TRAVIS_BRANCH_NAME" != "autodocker" ]]; then
+      case "$TRAVIS_OS_NAME" in
+        linux )
+          make -j4 && make test && make static -j4
+          ;;
+        osx )
+          make -j4 && make test
+          ;;
+      esac
+    elif [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
+      sudo docker build -f Dockerfile -t "vgteam/vg:$(git describe --always --tags)" .
+    fi
 # Cache all our dependency directories, and our lib and include
 cache:
   directories:
