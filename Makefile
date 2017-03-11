@@ -51,7 +51,6 @@ STATIC_FLAGS=-static -static-libstdc++ -static-libgcc
 
 # These are put into libvg.
 OBJ =
-OBJ += cpp/vg.pb.o
 OBJ += $(OBJ_DIR)/gssw_aligner.o
 OBJ += $(OBJ_DIR)/vg.o 
 OBJ += $(OBJ_DIR)/index.o
@@ -210,7 +209,7 @@ $(LIB_DIR)/libvg.a: $(OBJ) $(DEPS)
 	ar rs $@ $^
 
 get-deps:
-	sudo apt-get install -qq -y protobuf-compiler libprotoc-dev libjansson-dev libbz2-dev libncurses5-dev automake libtool jq samtools curl unzip redland-utils librdf-dev cmake pkg-config wget bc gtk-doc-tools raptor2-utils rasqal-utils bison flex libgoogle-perftools-dev
+	sudo apt-get install -qq -y libjansson-dev libbz2-dev libncurses5-dev automake libtool jq samtools curl unzip redland-utils librdf-dev cmake pkg-config wget bc gtk-doc-tools raptor2-utils rasqal-utils bison flex libgoogle-perftools-dev rs
 
 test: $(BIN_DIR)/vg $(LIB_DIR)/libvg.a test/build_graph $(BIN_DIR)/shuf $(BIN_DIR)/xg
 	. ./source_me.sh && cd test && $(MAKE)
